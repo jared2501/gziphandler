@@ -249,15 +249,11 @@ func (w *GzipResponseWriter) Close() error {
 // an http.Flusher.
 func (w *GzipResponseWriter) Flush() {
 	if w.gw == nil && !w.ignore {
-		// Only flush once startGzip or startPlain has been called.
-		//
-		// Flush is thus a no-op until we're certain whether a plain
-		// or gzipped response will be served.
-		return
+		_ = w.startGzip()
 	}
 
 	if w.gw != nil {
-		w.gw.Flush()
+		_ = w.gw.Flush()
 	}
 
 	if fw, ok := w.ResponseWriter.(http.Flusher); ok {
