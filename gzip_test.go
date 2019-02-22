@@ -23,7 +23,6 @@ const (
 
 func TestParseEncodings(t *testing.T) {
 	examples := map[string]codings{
-
 		// Examples from RFC 2616
 		"compress, gzip":                     {"compress": 1.0, "gzip": 1.0},
 		"":                                   {},
@@ -426,7 +425,7 @@ func TestFlushBeforeWrite(t *testing.T) {
 	res := w.Result()
 	assert.Equal(t, http.StatusNotFound, res.StatusCode)
 	assert.Equal(t, "gzip", res.Header.Get("Content-Encoding"))
-	assert.NotEqual(t, b, w.Body.Bytes())
+	assert.Equal(t, b, w.Body.Bytes())
 }
 
 func TestImplementCloseNotifier(t *testing.T) {
@@ -517,64 +516,116 @@ func TestDontWriteWhenNotWrittenTo(t *testing.T) {
 }
 
 var contentTypeTests = []struct {
-	name                 string
-	contentType          string
-	acceptedContentTypes []string
-	expectedGzip         bool
+	name                    string
+	contentType             string
+	acceptedContentTypes    []string
+	notAcceptedContentTypes []string
+	expectedGzip            bool
 }{
 	{
-		name:                 "Always gzip when content types are empty",
-		contentType:          "",
-		acceptedContentTypes: []string{},
-		expectedGzip:         true,
+		name:                    "Always gzip when content types are empty",
+		contentType:             "",
+		notAcceptedContentTypes: []string{},
+		acceptedContentTypes:    []string{},
+		expectedGzip:            true,
 	},
 	{
-		name:                 "MIME match",
-		contentType:          "application/json",
-		acceptedContentTypes: []string{"application/json"},
-		expectedGzip:         true,
+		name:                    "MIME match",
+		contentType:             "application/json",
+		notAcceptedContentTypes: []string{},
+		acceptedContentTypes:    []string{"application/json"},
+		expectedGzip:            true,
 	},
 	{
-		name:                 "MIME no match",
-		contentType:          "text/xml",
-		acceptedContentTypes: []string{"application/json"},
-		expectedGzip:         false,
+		name:                    "Not MIME match",
+		contentType:             "image/jpeg",
+		notAcceptedContentTypes: []string{"image/jpeg"},
+		acceptedContentTypes:    []string{},
+		expectedGzip:            false,
 	},
 	{
-		name:                 "MIME match with no other directive ignores non-MIME directives",
-		contentType:          "application/json; charset=utf-8",
-		acceptedContentTypes: []string{"application/json"},
-		expectedGzip:         true,
+		name:                    "Not MIME match prefix",
+		contentType:             "image/jpeg",
+		notAcceptedContentTypes: []string{"image"},
+		acceptedContentTypes:    []string{},
+		expectedGzip:            false,
 	},
 	{
-		name:                 "MIME match with other directives requires all directives be equal, different charset",
-		contentType:          "application/json; charset=ascii",
-		acceptedContentTypes: []string{"application/json; charset=utf-8"},
-		expectedGzip:         false,
+		name:                    "Not MIME match2 prefix",
+		contentType:             "application/json",
+		notAcceptedContentTypes: []string{"image"},
+		acceptedContentTypes:    []string{},
+		expectedGzip:            true,
 	},
 	{
-		name:                 "MIME match with other directives requires all directives be equal, same charset",
-		contentType:          "application/json; charset=utf-8",
-		acceptedContentTypes: []string{"application/json; charset=utf-8"},
-		expectedGzip:         true,
+		name:                    "Not MIME match2",
+		contentType:             "application/json",
+		notAcceptedContentTypes: []string{"image/jpeg"},
+		acceptedContentTypes:    []string{},
+		expectedGzip:            true,
 	},
 	{
-		name:                 "MIME match with other directives requires all directives be equal, missing charset",
-		contentType:          "application/json",
-		acceptedContentTypes: []string{"application/json; charset=ascii"},
-		expectedGzip:         false,
+		name:                    "Not accepted and accepted",
+		contentType:             "application/json",
+		notAcceptedContentTypes: []string{"image/jpeg"},
+		acceptedContentTypes:    []string{"application/json"},
+		expectedGzip:            true,
 	},
 	{
-		name:                 "MIME match case insensitive",
-		contentType:          "Application/Json",
-		acceptedContentTypes: []string{"application/json"},
-		expectedGzip:         true,
+		name:                    "Not accepted overrides accepted",
+		contentType:             "application/json",
+		notAcceptedContentTypes: []string{"application/json"},
+		acceptedContentTypes:    []string{"application/json"},
+		expectedGzip:            false,
 	},
 	{
-		name:                 "MIME match ignore whitespace",
-		contentType:          "application/json;charset=utf-8",
-		acceptedContentTypes: []string{"application/json;            charset=utf-8"},
-		expectedGzip:         true,
+		name:                    "MIME no match",
+		contentType:             "text/xml",
+		notAcceptedContentTypes: []string{},
+		acceptedContentTypes:    []string{"application/json"},
+		expectedGzip:            false,
+	},
+	{
+		name:                    "MIME match with no other directive ignores non-MIME directives",
+		contentType:             "application/json; charset=utf-8",
+		notAcceptedContentTypes: []string{},
+		acceptedContentTypes:    []string{"application/json"},
+		expectedGzip:            true,
+	},
+	{
+		name:                    "MIME match with other directives requires all directives be equal, different charset",
+		contentType:             "application/json; charset=ascii",
+		notAcceptedContentTypes: []string{},
+		acceptedContentTypes:    []string{"application/json; charset=utf-8"},
+		expectedGzip:            false,
+	},
+	{
+		name:                    "MIME match with other directives requires all directives be equal, same charset",
+		contentType:             "application/json; charset=utf-8",
+		notAcceptedContentTypes: []string{},
+		acceptedContentTypes:    []string{"application/json; charset=utf-8"},
+		expectedGzip:            true,
+	},
+	{
+		name:                    "MIME match with other directives requires all directives be equal, missing charset",
+		contentType:             "application/json",
+		notAcceptedContentTypes: []string{},
+		acceptedContentTypes:    []string{"application/json; charset=ascii"},
+		expectedGzip:            false,
+	},
+	{
+		name:                    "MIME match case insensitive",
+		contentType:             "Application/Json",
+		notAcceptedContentTypes: []string{},
+		acceptedContentTypes:    []string{"application/json"},
+		expectedGzip:            true,
+	},
+	{
+		name:                    "MIME match ignore whitespace",
+		contentType:             "application/json;charset=utf-8",
+		notAcceptedContentTypes: []string{},
+		acceptedContentTypes:    []string{"application/json;            charset=utf-8"},
+		expectedGzip:            true,
 	},
 }
 
@@ -586,7 +637,7 @@ func TestContentTypes(t *testing.T) {
 			io.WriteString(w, testBody)
 		})
 
-		wrapper, err := GzipHandlerWithOpts(ContentTypes(tt.acceptedContentTypes))
+		wrapper, err := GzipHandlerWithOpts(ContentTypes(tt.acceptedContentTypes), NotContentTypes(tt.notAcceptedContentTypes))
 		if !assert.Nil(t, err, "NewGzipHandlerWithOpts returned error", tt.name) {
 			continue
 		}

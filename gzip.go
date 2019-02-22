@@ -85,7 +85,7 @@ type GzipResponseWriter struct {
 	buf     []byte // Holds the first part of the write before reaching the minSize or the end of the write.
 	ignore  bool   // If true, then we immediately passthru writes to the underlying ResponseWriter.
 
-	contentTypes []parsedContentType // Only compress if the response is one of these content-types. All are accepted if empty.
+	notContentTypes, contentTypes []parsedContentType // Only compress if the response is one of these content-types. All are accepted if empty.
 }
 
 type GzipResponseWriterWithCloseNotify struct {
@@ -118,7 +118,7 @@ func (w *GzipResponseWriter) Write(b []byte) (int, error) {
 		ce    = w.Header().Get(contentEncoding)
 	)
 	// Only continue if they didn't already choose an encoding or a known unhandled content length or type.
-	if ce == "" && (cl == 0 || cl >= w.minSize) && (ct == "" || handleContentType(w.contentTypes, ct)) {
+	if ce == "" && (cl == 0 || cl >= w.minSize) && (ct == "" || handleContentType(w.notContentTypes, w.contentTypes, ct)) {
 		// If the current buffer is less than minSize and a Content-Length isn't set, then wait until we have more data.
 		if len(w.buf) < w.minSize && cl == 0 {
 			return len(b), nil
@@ -131,7 +131,7 @@ func (w *GzipResponseWriter) Write(b []byte) (int, error) {
 				w.Header().Set(contentType, ct)
 			}
 			// If the Content-Type is acceptable to GZIP, initialize the GZIP writer.
-			if handleContentType(w.contentTypes, ct) {
+			if handleContentType(w.notContentTypes, w.contentTypes, ct) {
 				if err := w.startGzip(); err != nil {
 					return 0, err
 				}
@@ -320,10 +320,11 @@ func GzipHandlerWithOpts(opts ...option) (func(http.Handler) http.Handler, error
 			w.Header().Add(vary, acceptEncoding)
 			if acceptsGzip(r) {
 				gw := &GzipResponseWriter{
-					ResponseWriter: w,
-					index:          index,
-					minSize:        c.minSize,
-					contentTypes:   c.contentTypes,
+					ResponseWriter:  w,
+					index:           index,
+					minSize:         c.minSize,
+					contentTypes:    c.contentTypes,
+					notContentTypes: c.notContentTypes,
 				}
 				defer gw.Close()
 
@@ -344,7 +345,6 @@ func GzipHandlerWithOpts(opts ...option) (func(http.Handler) http.Handler, error
 // Parsed representation of one of the inputs to ContentTypes.
 // See https://golang.org/pkg/mime/#ParseMediaType
 type parsedContentType struct {
-	not       bool
 	isPrefix  bool
 	mediaType string
 	params    map[string]string
@@ -352,8 +352,8 @@ type parsedContentType struct {
 
 // equals returns whether this content type matches another content type.
 func (pct parsedContentType) equals(mediaType string, params map[string]string) bool {
-	if pct.isPrefix && !strings.HasPrefix(mediaType, pct.mediaType) {
-		return false
+	if pct.isPrefix && strings.HasPrefix(mediaType+"/", pct.mediaType) {
+		return true
 	} else if pct.mediaType != mediaType {
 		return false
 	}
@@ -376,9 +376,10 @@ func (pct parsedContentType) equals(mediaType string, params map[string]string) 
 
 // Used for functional configuration.
 type config struct {
-	minSize      int
-	level        int
-	contentTypes []parsedContentType
+	minSize         int
+	level           int
+	contentTypes    []parsedContentType
+	notContentTypes []parsedContentType
 }
 
 func (c *config) validate() error {
@@ -467,11 +468,10 @@ func ContentTypes(types []string) option {
 // Content-Type.
 func NotContentTypes(types []string) option {
 	return func(c *config) {
-		c.contentTypes = []parsedContentType{}
+		c.notContentTypes = []parsedContentType{}
 		for _, v := range types {
 			if !strings.Contains(v, "/") {
-				c.contentTypes = append(c.contentTypes, parsedContentType{
-					not:       true,
+				c.notContentTypes = append(c.notContentTypes, parsedContentType{
 					isPrefix:  true,
 					mediaType: v,
 				})
@@ -479,8 +479,7 @@ func NotContentTypes(types []string) option {
 			}
 			mediaType, params, err := mime.ParseMediaType(v)
 			if err == nil {
-				c.contentTypes = append(c.contentTypes, parsedContentType{
-					not:       true,
+				c.notContentTypes = append(c.notContentTypes, parsedContentType{
 					mediaType: mediaType,
 					params:    params,
 				})
@@ -505,9 +504,9 @@ func acceptsGzip(r *http.Request) bool {
 }
 
 // returns true if we've been configured to compress the specific content type.
-func handleContentType(contentTypes []parsedContentType, ct string) bool {
+func handleContentType(notContentTypes, contentTypes []parsedContentType, ct string) bool {
 	// If contentTypes is empty we handle all content types.
-	if len(contentTypes) == 0 {
+	if len(notContentTypes) == 0 && len(contentTypes) == 0 {
 		return true
 	}
 
@@ -516,17 +515,21 @@ func handleContentType(contentTypes []parsedContentType, ct string) bool {
 		return false
 	}
 
-	var match = false
+	for _, c := range notContentTypes {
+		if c.equals(mediaType, params) {
+			return false
+		}
+	}
+	if len(contentTypes) == 0 {
+		return true
+	}
 	for _, c := range contentTypes {
-		if c.equals(mediaType, params) && !c.not {
-			match = true
-		} else if c.equals(mediaType, params) && c.not {
-			match = false
-			break
+		if c.equals(mediaType, params) {
+			return true
 		}
 	}
 
-	return match
+	return false
 }
 
 // parseEncodings attempts to parse a list of codings, per RFC 2616, as might
