@@ -349,13 +349,16 @@ func GzipHandlerWithOpts(opts ...option) (func(http.Handler) http.Handler, error
 // See https://golang.org/pkg/mime/#ParseMediaType
 type parsedContentType struct {
 	not       bool
+	isPrefix  bool
 	mediaType string
 	params    map[string]string
 }
 
 // equals returns whether this content type matches another content type.
 func (pct parsedContentType) equals(mediaType string, params map[string]string) bool {
-	if pct.mediaType != mediaType {
+	if pct.isPrefix && !strings.HasPrefix(mediaType, pct.mediaType) {
+		return false
+	} else if pct.mediaType != mediaType {
 		return false
 	}
 	// if pct has no params, don't care about other's params
@@ -430,6 +433,13 @@ func ContentTypes(types []string) option {
 	return func(c *config) {
 		c.contentTypes = []parsedContentType{}
 		for _, v := range types {
+			if !strings.Contains(v, "/") {
+				c.contentTypes = append(c.contentTypes, parsedContentType{
+					isPrefix:  true,
+					mediaType: v,
+				})
+				continue
+			}
 			mediaType, params, err := mime.ParseMediaType(v)
 			if err == nil {
 				c.contentTypes = append(c.contentTypes, parsedContentType{
@@ -463,6 +473,14 @@ func NotContentTypes(types []string) option {
 	return func(c *config) {
 		c.contentTypes = []parsedContentType{}
 		for _, v := range types {
+			if !strings.Contains(v, "/") {
+				c.contentTypes = append(c.contentTypes, parsedContentType{
+					not:       true,
+					isPrefix:  true,
+					mediaType: v,
+				})
+				continue
+			}
 			mediaType, params, err := mime.ParseMediaType(v)
 			if err == nil {
 				c.contentTypes = append(c.contentTypes, parsedContentType{
